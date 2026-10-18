@@ -5,11 +5,15 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      # Mount host Docker socket so DockPulse can list, inspect & control containers
+      # Zugriff auf die Docker-Engine des Hosts
       - /var/run/docker.sock:/var/run/docker.sock
-      # Persist custom merged container groups
+      # Persistenter Speicher für eigene zusammengeführte Container-Gruppen
       - ./data:/app/data
     environment:
       - PORT=3000
       - TZ=Europe/Berlin
+      - AUTH_ENABLED=true
+      - AUTH_USER=admin
+      - AUTH_PASS=MeinSicheresPasswort123!
+      - SESSION_HOURS=24
     restart: unless-stopped
