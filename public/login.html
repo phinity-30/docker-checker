@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Anmelden — DockPulse</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <style>
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background: radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.16), transparent 60%), var(--bg-main);
+      padding: 20px;
+    }
+
+    .login-wrapper {
+      width: 100%;
+      max-width: 410px;
+      animation: fadeIn 0.25s ease;
+    }
+
+    .login-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px 28px;
+      box-shadow: var(--shadow);
+    }
+
+    .login-brand {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      margin-bottom: 26px;
+    }
+
+    .login-logo {
+      width: 54px;
+      height: 54px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--primary), #6366f1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      box-shadow: 0 8px 20px rgba(59, 130, 246, 0.35);
+      margin-bottom: 14px;
+    }
+
+    .login-title {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .login-subtitle {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .login-form {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .input-wrapper .form-input {
+      width: 100%;
+      height: 42px;
+      padding-left: 38px;
+      padding-right: 40px;
+      font-size: 13.5px;
+    }
+
+    .input-icon {
+      position: absolute;
+      left: 12px;
+      font-size: 14px;
+      color: var(--text-muted);
+      pointer-events: none;
+    }
+
+    .toggle-pw-btn {
+      position: absolute;
+      right: 10px;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 14px;
+      padding: 4px;
+    }
+    .toggle-pw-btn:hover {
+      color: var(--text-main);
+    }
+
+    .login-error {
+      background: var(--danger-soft);
+      border: 1px solid rgba(244, 63, 94, 0.35);
+      color: var(--danger);
+      padding: 10px 12px;
+      border-radius: 9px;
+      font-size: 12.5px;
+      font-weight: 500;
+      display: none;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .login-submit {
+      height: 42px;
+      font-size: 14px;
+      font-weight: 600;
+      margin-top: 4px;
+      width: 100%;
+    }
+
+    .login-footer {
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="login-wrapper">
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="login-logo">🐳</div>
+        <h1 class="login-title" id="login-app-title">DockPulse</h1>
+        <p class="login-subtitle">Geschütztes Docker-Management Dashboard</p>
+      </div>
+
+      <form id="login-form" class="login-form" onsubmit="handleLogin(event)">
+        <div id="login-error" class="login-error">
+          <span>⚠️</span>
+          <span id="login-error-text">Ungültiger Benutzername oder Passwort.</span>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="username">Benutzername</label>
+          <div class="input-wrapper">
+            <span class="input-icon">👤</span>
+            <input
+              id="username"
+              type="text"
+              class="form-input"
+              placeholder="Benutzername eingeben"
+              autocomplete="username"
+              required
+              autofocus
+            />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="password">Passwort</label>
+          <div class="input-wrapper">
+            <span class="input-icon">🔒</span>
+            <input
+              id="password"
+              type="password"
+              class="form-input"
+              placeholder="Passwort eingeben"
+              autocomplete="current-password"
+              required
+            />
+            <button type="button" class="toggle-pw-btn" onclick="togglePasswordVisibility()" title="Passwort anzeigen/verbergen">
+              👁️
+            </button>
+          </div>
+        </div>
+
+        <button id="submit-btn" type="submit" class="btn btn-primary login-submit">
+          🔐 Anmelden
+        </button>
+      </form>
+
+      <div class="login-footer">
+        <span>🛡️ Session-Schutz aktiv</span>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="toggleTheme()">
+          🌓 Design wechseln
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    if (localStorage.getItem('dockpulse_theme') === 'light') {
+      document.documentElement.classList.add('light');
+    }
+
+    function toggleTheme() {
+      const isLight = document.documentElement.classList.toggle('light');
+      localStorage.setItem('dockpulse_theme', isLight ? 'light' : 'dark');
+    }
+
+    function togglePasswordVisibility() {
+      const pw = document.getElementById('password');
+      pw.type = pw.type === 'password' ? 'text' : 'password';
+    }
+
+    // Fetch public auth status (e.g. custom app title or already logged in)
+    fetch('/api/auth/status')
+      .then(r => r.json())
+      .then(data => {
+        if (data.appTitle) {
+          document.getElementById('login-app-title').textContent = data.appTitle;
+          document.title = `Anmelden — ${data.appTitle}`;
+        }
+        if (data.authenticated) {
+          window.location.replace('/');
+        }
+      })
+      .catch(() => {});
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      const errorBox = document.getElementById('login-error');
+      const errorText = document.getElementById('login-error-text');
+      const submitBtn = document.getElementById('submit-btn');
+
+      errorBox.style.display = 'none';
+      submitBtn.disabled = true;
+      submitBtn.textContent = '⏳ Prüfe Zugangsdaten...';
+
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          errorText.textContent = data.error || 'Anmeldung fehlgeschlagen.';
+          errorBox.style.display = 'flex';
+          submitBtn.disabled = false;
+          submitBtn.textContent = '🔐 Anmelden';
+          return;
+        }
+
+        window.location.replace('/');
+      } catch (err) {
+        errorText.textContent = 'Verbindungsfehler zum Server.';
+        errorBox.style.display = 'flex';
+        submitBtn.disabled = false;
+        submitBtn.textContent = '🔐 Anmelden';
+      }
+    }
+  </script>
+</body>
+</html>
