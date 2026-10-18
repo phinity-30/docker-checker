@@ -1,0 +1,15 @@
+services:
+  docker-checker:
+    build: .
+    container_name: docker-checker
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount host Docker socket so DockPulse can list, inspect & control containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Persist custom merged container groups
+      - ./data:/app/data
+    environment:
+      - PORT=3000
+      - TZ=Europe/Berlin
+    restart: unless-stopped
