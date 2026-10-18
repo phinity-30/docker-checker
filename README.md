@@ -24,11 +24,18 @@ Ein leichtgewichtiger, eigenständiger Docker-Container mit moderner Web-Oberfl�
 
 ---
 
-## 🚀 Starten als Docker-Container (Empfohlen für Server / NAS / Linux)
+## 🚀 Option 1: Direkt in Portainer einfügen (Empfohlen)
 
-Im Projektordner einfach per Docker Compose bauen und starten:
+Du kannst den kompletten Inhalt der Datei **[`portainer-stack.yml`](./portainer-stack.yml)** direkt in Portainer unter **Stacks $\rightarrow$ + Add stack $\rightarrow$ Web editor** einfügen.
+Da dort `build: https://github.com/phinity-30/docker-checker.git#main` hinterlegt ist, lädt und baut Portainer das Image vollautomatisch von GitHub – ganz ohne vorheriges Klonen per SSH!
+
+---
+
+## 🚀 Option 2: Per Terminal & Docker Compose starten
 
 ```bash
+git clone https://github.com/phinity-30/docker-checker.git
+cd docker-checker
 docker compose up -d --build
 ```
 
@@ -37,13 +44,20 @@ Danach im Browser öffnen:
 
 ---
 
-## 💻 Lokal testen (ohne Docker / unter Windows)
+## ⚙️ Alle Konfigurationsmöglichkeiten (Umgebungsvariablen)
 
-Falls auf deinem aktuellen PC kein Docker läuft, schaltet die App automatisch in einen **interaktiven Demo-Simulationsmodus**, sodass du alle Funktionen direkt lokal ausprobieren kannst:
-
-```bash
-node src/server.js
-```
-
-Danach im Browser öffnen:
-👉 **`http://localhost:3000`**
+| Variable | Standardwert | Beschreibung |
+| :--- | :--- | :--- |
+| `PORT` | `3000` | Interner HTTP-Port des Containers |
+| `TZ` | `Europe/Berlin` | Zeitzone für Log-Zeitstempel |
+| `APP_TITLE` | `DockPulse` | Angezeigter Titel oben links im Web-Dashboard |
+| `DEFAULT_THEME` | `dark` | Standard-Farbschema (`dark` oder `light`) |
+| `DEFAULT_VIEW` | `stacks` | Start-Tab beim Öffnen (`stacks`, `all` oder `groups`) |
+| `AUTO_REFRESH_SECONDS` | `4` | Live-Aktualisierungsintervall in Sekunden |
+| `LOG_TAIL_LINES` | `150` | Anzahl der geladenen Log-Zeilen pro Container |
+| `DOCKER_SOCKET` | `/var/run/docker.sock` | Pfad zum gemounteten Docker-Socket |
+| `DOCKER_HOST` | *(leer)* | Optional: Remote Docker-API via TCP (z. B. `tcp://192.168.1.50:2375`) |
+| `DATA_DIR` | `/app/data` | Speicherort für zusammengeführte Gruppen (`groups.json`) |
+| `DEMO_MODE` | `false` | Auf `true` setzen, um den Demo-Simulationsmodus zu erzwingen |
+| `BASIC_AUTH_USER` | *(leer)* | Optional: Benutzername für HTTP Basic Auth Passwortschutz |
+| `BASIC_AUTH_PASS` | *(leer)* | Optional: Passwort für HTTP Basic Auth Passwortschutz |
