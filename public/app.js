@@ -73,10 +73,28 @@ async function apiFetch(url, options = {}) {
   return data;
 }
 
+let configAppliedOnce = false;
+
 async function refreshAll(fetchDetailsToo = true) {
   try {
     const data = await apiFetch('/api/overview?stats=true');
     appState = data;
+
+    if (!configAppliedOnce && data.config) {
+      configAppliedOnce = true;
+      if (data.config.appTitle) {
+        document.title = `${data.config.appTitle} — Docker Container, Stack & Gruppen Manager`;
+        const titleSpan = document.querySelector('.brand-title > span:first-child');
+        if (titleSpan) titleSpan.textContent = data.config.appTitle;
+      }
+      if (!localStorage.getItem('dockpulse_theme') && data.config.defaultTheme === 'light') {
+        document.documentElement.classList.add('light');
+        document.getElementById('btn-theme').innerHTML = '<span>🌙</span>';
+      }
+      if (['stacks', 'all', 'groups'].includes(data.config.defaultView)) {
+        setMainView(data.config.defaultView);
+      }
+    }
 
     // Select first container by default if none selected
     if (!selectedContainerName && data.containers.length > 0) {
