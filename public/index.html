@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DockPulse — Docker Container, Stack & Gruppen Manager</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <!-- TOP NAVIGATION BAR -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-logo">🐳</div>
+      <div>
+        <div class="brand-title">
+          <span>DockPulse</span>
+          <span id="socket-badge" class="mode-badge demo">
+            <span class="pulse-dot"></span>
+            <span id="socket-badge-text">Verbinde...</span>
+          </span>
+        </div>
+        <div class="brand-subtitle" id="socket-path-label">Docker Container, Stack & Gruppen-Steuerung</div>
+      </div>
+    </div>
+
+    <!-- Main View Switcher -->
+    <nav class="view-tabs">
+      <button id="view-btn-stacks" class="view-tab active" onclick="setMainView('stacks')">
+        <span>📚 Stacks (Portainer)</span>
+        <span id="badge-stacks-count" class="tab-counter">0</span>
+      </button>
+      <button id="view-btn-all" class="view-tab" onclick="setMainView('all')">
+        <span>📦 Alle Container</span>
+        <span id="badge-all-count" class="tab-counter">0</span>
+      </button>
+      <button id="view-btn-groups" class="view-tab" onclick="setMainView('groups')">
+        <span>🔗 Eigene Gruppen</span>
+        <span id="badge-groups-count" class="tab-counter">0</span>
+      </button>
+    </nav>
+
+    <!-- Host Quick Stats & Controls -->
+    <div class="topbar-right">
+      <div class="stat-pill" title="Laufende Container">
+        <span class="stat-dot running"></span>
+        <strong id="stat-running">0</strong>
+        <span>Running</span>
+      </div>
+      <div class="stat-pill" title="Gestoppte Container">
+        <span class="stat-dot stopped"></span>
+        <strong id="stat-stopped">0</strong>
+        <span>Stopped</span>
+      </div>
+      <button id="btn-autorefresh" class="icon-btn active" onclick="toggleAutoRefresh()" title="Automatische Aktualisierung alle 4 Sekunden">
+        <span>⚡ Live</span>
+      </button>
+      <button class="icon-btn" onclick="refreshAll(true)" title="Jetzt aktualisieren">
+        <span>🔄</span>
+      </button>
+      <button id="btn-theme" class="icon-btn" onclick="toggleTheme()" title="Design wechseln (Dunkel / Hell)">
+        <span>☀️</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- SUB-TOOLBAR: SEARCH, FILTERS & BATCH MERGE ACTIONS -->
+  <section class="subtoolbar">
+    <div class="search-filter-group">
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input
+          id="search-input"
+          type="text"
+          class="search-input"
+          placeholder="Container, Stack, Image oder Port suchen..."
+          oninput="renderLeftPane()"
+        />
+      </div>
+
+      <div class="filter-pills">
+        <button id="filter-all" class="filter-pill active" onclick="setStatusFilter('all')">Alle</button>
+        <button id="filter-running" class="filter-pill" onclick="setStatusFilter('running')">Laufend</button>
+        <button id="filter-stopped" class="filter-pill" onclick="setStatusFilter('stopped')">Gestoppt</button>
+      </div>
+
+      <button class="btn btn-ghost btn-sm" onclick="openGroupModal()">
+        <span>➕ Neue Gruppe erstellen</span>
+      </button>
+    </div>
+
+    <!-- Contextual Multi-Select Batch Action Bar -->
+    <div id="batch-bar" class="batch-bar" style="display: none;">
+      <span class="batch-label"><span id="batch-count">0</span> ausgewählt:</span>
+      <button class="btn btn-primary btn-sm" onclick="openGroupModalFromSelection()">
+        🔗 Zusammenführen
+      </button>
+      <button class="btn btn-success btn-sm" onclick="runBatchSelected('start')">
+        ▶ Alle Starten
+      </button>
+      <button class="btn btn-danger btn-sm" onclick="runBatchSelected('stop')">
+        ⏹ Alle Stoppen
+      </button>
+      <button class="btn btn-ghost btn-sm" onclick="runBatchSelected('restart')">
+        🔄 Neustart
+      </button>
+      <button class="btn btn-ghost btn-sm" onclick="clearSelection()" title="Auswahl aufheben">
+        ✕
+      </button>
+    </div>
+
+    <div id="toolbar-hint" style="font-size: 12px; color: var(--text-muted);">
+      💡 Klicke auf einen Container für Details & Aktionen oder hake ☑️ mehrere an zum Zusammenführen
+    </div>
+  </section>
+
+  <!-- MAIN SPLIT WORKSPACE -->
+  <main class="workspace">
+    <!-- Left Column: Stacks / Containers / Custom Groups -->
+    <section id="left-pane" class="left-pane">
+      <!-- Populated dynamically by app.js -->
+    </section>
+
+    <!-- Right Column: Container Detail & Action Inspector -->
+    <aside id="right-pane" class="right-pane">
+      <!-- Populated dynamically by app.js -->
+    </aside>
+  </main>
+
+  <!-- MODAL: CREATE / EDIT CUSTOM MERGED GROUP -->
+  <div id="group-modal" class="modal-backdrop hidden" onclick="if(event.target === this) closeGroupModal()">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span id="group-modal-title">🔗 Container zu einer Gruppe zusammenführen</span>
+        <button class="btn btn-ghost btn-sm" onclick="closeGroupModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="group-edit-id" value="" />
+        <div style="display: grid; grid-template-columns: 90px 1fr; gap: 10px;">
+          <div class="form-group">
+            <label class="form-label">Icon</label>
+            <select id="group-icon-input" class="form-input">
+              <option value="🔗">🔗 Gruppe</option>
+              <option value="🎬">🎬 Media</option>
+              <option value="💻">💻 Dev</option>
+              <option value="🛡️">🛡️ Netzwerk</option>
+              <option value="🗄️">🗄️ Datenbank</option>
+              <option value="🚀">🚀 App</option>
+              <option value="☁️">☁️ Cloud</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Gruppenname *</label>
+            <input id="group-name-input" type="text" class="form-input" placeholder="z.B. Media & Downloader oder Backup-System" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Beschreibung (optional)</label>
+          <input id="group-desc-input" type="text" class="form-input" placeholder="Kurze Notiz, wofür diese Container-Gruppe gedacht ist" />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Container in dieser Gruppe auswählen:</label>
+          <div id="group-container-checklist" class="container-checklist">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeGroupModal()">Abbrechen</button>
+        <button class="btn btn-primary" onclick="saveGroupModal()">💾 Gruppe speichern</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATIONS -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
