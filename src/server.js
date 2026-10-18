@@ -15,7 +15,16 @@ const {
   deleteGroup
 } = require('./groupStore');
 
+// Configuration via Environment Variables
 const PORT = Number(process.env.PORT) || 3000;
+const APP_TITLE = process.env.APP_TITLE || 'DockPulse';
+const AUTO_REFRESH_SECONDS = Math.max(1, Number(process.env.AUTO_REFRESH_SECONDS) || 4);
+const DEFAULT_THEME = (process.env.DEFAULT_THEME || 'dark').toLowerCase();
+const DEFAULT_VIEW = (process.env.DEFAULT_VIEW || 'stacks').toLowerCase();
+const LOG_TAIL_LINES = Math.max(10, Number(process.env.LOG_TAIL_LINES) || 150);
+const BASIC_AUTH_USER = process.env.BASIC_AUTH_USER || '';
+const BASIC_AUTH_PASS = process.env.BASIC_AUTH_PASS || '';
+
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
 const MIME_TYPES = {
@@ -35,6 +44,24 @@ function sendJson(res, statusCode, data) {
     'Cache-Control': 'no-store'
   });
   res.end(payload);
+}
+
+function checkBasicAuth(req, res) {
+  if (!BASIC_AUTH_USER || !BASIC_AUTH_PASS) return true;
+  const authHeader = req.headers.authorization || '';
+  if (!authHeader.startsWith('Basic ')) {
+    res.writeHead(401, { 'WWW-Authenticate': `Basic realm="${APP_TITLE}"` });
+    res.end('Authentifizierung erforderlich');
+    return false;
+  }
+  const credentials = Buffer.from(authHeader.slice(6), 'base64').toString('utf8');
+  const [user, pass] = credentials.split(':');
+  if (user === BASIC_AUTH_USER && pass === BASIC_AUTH_PASS) {
+    return true;
+  }
+  res.writeHead(401, { 'WWW-Authenticate': `Basic realm="${APP_TITLE}"` });
+  res.end('Ungültige Zugangsdaten');
+  return false;
 }
 
 function parseJsonBody(req) {
@@ -90,7 +117,6 @@ function buildStacksSummary(containers) {
     }
   }
 
-  // Sort stacks: Compose stacks alphabetically first, 'standalone' last
   return Array.from(map.values()).sort((a, b) => {
     if (a.isStandalone && !b.isStandalone) return 1;
     if (!a.isStandalone && b.isStandalone) return -1;
@@ -102,6 +128,14 @@ const server = http.createServer(async (req, res) => {
   try {
     const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const pathname = parsedUrl.pathname;
+
+    // Healthcheck Endpoint (unauthenticated for Docker/Portainer healthcheck)
+    if (req.method === 'GET' && pathname === '/health') {
+      return sendJson(res, 200, { status: 'ok', uptime: process.uptime() });
+    }
+
+    // Optional Basic Auth Check
+    if (!checkBasicAuth(req, res)) return;
 
     // --- API ROUTES ---
 
@@ -120,6 +154,13 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         mode,
         socketPath,
+        config: {
+          appTitle: APP_TITLE,
+          autoRefreshSeconds: AUTO_REFRESH_SECONDS,
+          defaultTheme: DEFAULT_THEME,
+          defaultView: DEFAULT_VIEW,
+          logTailLines: LOG_TAIL_LINES
+        },
         stats: {
           total: containers.length,
           running,
@@ -138,7 +179,7 @@ const server = http.createServer(async (req, res) => {
     const containerDetailMatch = pathname.match(/^\/api\/containers\/([^/]+)$/);
     if (req.method === 'GET' && containerDetailMatch) {
       const idOrName = decodeURIComponent(containerDetailMatch[1]);
-      const tail = Number(parsedUrl.searchParams.get('tail')) || 100;
+      const tail = Number(parsedUrl.searchParams.get('tail')) || LOG_TAIL_LINES;
       const details = await getContainerDetails(idOrName, tail);
       return sendJson(res, 200, details);
     }
@@ -222,7 +263,6 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': contentType });
       fs.createReadStream(resolvedPath).pipe(res);
     } else {
-      // Fallback to index.html for SPA
       const indexFile = path.join(PUBLIC_DIR, 'index.html');
       if (fs.existsSync(indexFile)) {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -240,7 +280,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`=================================================`);
-  console.log(`🐳 DockPulse (Docker-Checker) läuft auf Port ${PORT}`);
+  console.log(`🐳 ${APP_TITLE} (Docker-Checker) läuft auf Port ${PORT}`);
   console.log(`🌐 Web-UI: http://localhost:${PORT}`);
   console.log(`=================================================`);
 });
