@@ -1,0 +1,112 @@
+# =============================================================================
+# 🐳 DOCKPULSE (DOCKER-CHECKER) — PORTAINER STACK KONFIGURATION
+# =============================================================================
+# Anleitung für Portainer:
+# 1. Öffne Portainer -> "Stacks" -> "+ Add stack"
+# 2. Vergib einen Namen (z.B. "docker-checker")
+# 3. Kopiere diesen gesamten Inhalt in den "Web editor"
+# 4. Passe unten bei Bedarf Ports, Pfade oder Passwörter an
+# 5. Klicke unten auf "Deploy the stack"
+# =============================================================================
+
+services:
+  docker-checker:
+    # Baut das Image automatisch direkt aus deinem GitHub-Repository!
+    # (Kein vorheriges "git clone" auf dem Server nötig)
+    build:
+      context: https://github.com/phinity-30/docker-checker.git#main
+      dockerfile: Dockerfile
+
+    image: docker-checker:latest
+    container_name: docker-checker
+
+    # Neustart-Verhalten:
+    # "unless-stopped" | "always" | "on-failure" | "no"
+    restart: unless-stopped
+
+    # -------------------------------------------------------------------------
+    # 🌐 PORTS (Format: "HOST_PORT:CONTAINER_PORT")
+    # -------------------------------------------------------------------------
+    ports:
+      - "3000:3000"   # Ändere links "3000", falls Port 3000 auf deinem Host schon belegt ist (z.B. "8888:3000")
+
+    # -------------------------------------------------------------------------
+    # 💾 VOLUMES & SPEICHERPFADE
+    # -------------------------------------------------------------------------
+    volumes:
+      # 1) Zugriff auf die Docker-Engine des Hosts (Pflicht für Live-Steuerung)
+      - /var/run/docker.sock:/var/run/docker.sock
+
+      # 2) Persistenter Speicher für deine zusammengeführten Container-Gruppen (groups.json)
+      # Option A: Benanntes Docker-Volume (Empfohlen für Portainer - funktioniert sofort überall)
+      - docker_checker_data:/app/data
+      # Option B: Fester Ordner auf dem Host (Kommentiere Option A aus, falls gewünscht):
+      # - /opt/docker-checker/data:/app/data
+
+    # -------------------------------------------------------------------------
+    # ⚙️ UMGEBUNGSVARIABLEN (ALLE KONFIGURATIONSMÖGLICHKEITEN)
+    # -------------------------------------------------------------------------
+    environment:
+      # --- Basis-Einstellungen ---
+      - PORT=3000                           # Interner Server-Port im Container (Standard: 3000)
+      - TZ=Europe/Berlin                    # Zeitzone für korrekte Log-Zeitstempel
+      - NODE_ENV=production                 # Laufzeit-Modus (production | development)
+
+      # --- UI & Anzeige-Optionen ---
+      - APP_TITLE=DockPulse                 # Name oben links im Dashboard (Standard: DockPulse)
+      - DEFAULT_THEME=dark                  # Standard-Farbschema: "dark" oder "light"
+      - DEFAULT_VIEW=stacks                 # Start-Ansicht beim Öffnen: "stacks" | "all" | "groups"
+      - AUTO_REFRESH_SECONDS=4              # Intervall der Live-Aktualisierung in Sekunden (Standard: 4)
+      - LOG_TAIL_LINES=150                  # Anzahl der standardmäßig geladenen Log-Zeilen pro Container (Standard: 150)
+
+      # --- Daten- & Docker-Verbindung ---
+      - DATA_DIR=/app/data                  # Speicherort für eigene Gruppen im Container
+      - DOCKER_SOCKET=/var/run/docker.sock  # Pfad zum gemounteten Docker-Socket
+      - DEMO_MODE=false                     # Auf "true" setzen, um Test-/Demodaten statt echter Container zu zeigen
+
+      # --- Optional: Remote Docker-Host über TCP / Socket-Proxy (statt lokalem Socket) ---
+      # - DOCKER_HOST=tcp://192.168.1.100:2375
+
+      # --- Optional: Passwortschutz (HTTP Basic Auth) ---
+      # Wenn beide Werte gesetzt sind, fragt der Browser beim Öffnen nach Benutzername & Passwort.
+      # Leer lassen, um das Dashboard ohne Login im Heimnetz zu öffnen:
+      - BASIC_AUTH_USER=
+      - BASIC_AUTH_PASS=
+
+    # -------------------------------------------------------------------------
+    # 🩺 HEALTHCHECK (Überwacht automatisch in Portainer, ob die App reagiert)
+    # -------------------------------------------------------------------------
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    # -------------------------------------------------------------------------
+    # 🛡️ OPTIONAL: RESSOURCEN-LIMITS (Bei Bedarf Kommentarzeichen # entfernen)
+    # -------------------------------------------------------------------------
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: "0.50"
+    #       memory: 256M
+    #     reservations:
+    #       memory: 64M
+
+    # -------------------------------------------------------------------------
+    # 🏷️ OPTIONAL: LABELS (Für Homepage, Traefik, Watchtower etc.)
+    # -------------------------------------------------------------------------
+    labels:
+      - "com.docker.compose.project=docker-checker"
+      - "org.opencontainers.image.title=DockPulse Docker-Checker"
+      - "org.opencontainers.image.source=https://github.com/phinity-30/docker-checker"
+      # Watchtower Auto-Update deaktivieren (falls Watchtower genutzt wird, da lokal gebaut):
+      - "com.centurylinklabs.watchtower.enable=false"
+
+# =============================================================================
+# 📦 PERSISTENTE VOLUMES
+# =============================================================================
+volumes:
+  docker_checker_data:
+    driver: local
