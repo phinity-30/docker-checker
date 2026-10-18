@@ -66,11 +66,22 @@ async function apiFetch(url, options = {}) {
     headers: { 'Content-Type': 'application/json' },
     ...options
   });
+  if (res.status === 401) {
+    window.location.replace('/login');
+    throw new Error('Nicht angemeldet');
+  }
   const data = await res.json();
   if (!res.ok) {
     throw new Error(data.error || `HTTP Fehler ${res.status}`);
   }
   return data;
+}
+
+async function logoutUser() {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+  } catch (_) {}
+  window.location.replace('/login');
 }
 
 let configAppliedOnce = false;
@@ -79,6 +90,13 @@ async function refreshAll(fetchDetailsToo = true) {
   try {
     const data = await apiFetch('/api/overview?stats=true');
     appState = data;
+
+    if (data.auth && data.auth.authEnabled) {
+      const logoutBtn = document.getElementById('btn-logout');
+      const userSpan = document.getElementById('current-username');
+      if (logoutBtn) logoutBtn.style.display = 'inline-flex';
+      if (userSpan && data.auth.username) userSpan.textContent = data.auth.username;
+    }
 
     if (!configAppliedOnce && data.config) {
       configAppliedOnce = true;
