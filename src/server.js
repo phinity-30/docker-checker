@@ -1,6 +1,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const {
   isDockerAvailable,
   listContainers,
@@ -15,17 +16,30 @@ const {
   deleteGroup
 } = require('./groupStore');
 
-// Configuration via Environment Variables
+// --- CONFIGURATION VIA ENVIRONMENT VARIABLES ---
 const PORT = Number(process.env.PORT) || 3000;
 const APP_TITLE = process.env.APP_TITLE || 'DockPulse';
 const AUTO_REFRESH_SECONDS = Math.max(1, Number(process.env.AUTO_REFRESH_SECONDS) || 4);
 const DEFAULT_THEME = (process.env.DEFAULT_THEME || 'dark').toLowerCase();
 const DEFAULT_VIEW = (process.env.DEFAULT_VIEW || 'stacks').toLowerCase();
 const LOG_TAIL_LINES = Math.max(10, Number(process.env.LOG_TAIL_LINES) || 150);
-const BASIC_AUTH_USER = process.env.BASIC_AUTH_USER || '';
-const BASIC_AUTH_PASS = process.env.BASIC_AUTH_PASS || '';
+
+// Authentication & Security Settings
+const AUTH_ENABLED = (process.env.AUTH_ENABLED || 'true').toLowerCase() !== 'false';
+const AUTH_USER = process.env.AUTH_USER || process.env.BASIC_AUTH_USER || 'admin';
+const AUTH_PASS = process.env.AUTH_PASS || process.env.BASIC_AUTH_PASS || 'admin123';
+const SESSION_HOURS = Math.max(1, Number(process.env.SESSION_HOURS) || 24);
+const SESSION_SECRET =
+  process.env.SESSION_SECRET ||
+  crypto.createHash('sha256').update(`dockpulse-${AUTH_USER}-${AUTH_PASS}`).digest('hex');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+const COOKIE_NAME = 'dockpulse_session';
+
+// Brute-force protection store: ip -> { count, resetAt }
+const loginAttempts = new Map();
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCKOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -37,31 +51,77 @@ const MIME_TYPES = {
   '.ico': 'image/x-icon'
 };
 
-function sendJson(res, statusCode, data) {
+function sendJson(res, statusCode, data, extraHeaders = {}) {
   const payload = JSON.stringify(data);
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store'
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'SAMEORIGIN',
+    ...extraHeaders
   });
   res.end(payload);
 }
 
-function checkBasicAuth(req, res) {
-  if (!BASIC_AUTH_USER || !BASIC_AUTH_PASS) return true;
-  const authHeader = req.headers.authorization || '';
-  if (!authHeader.startsWith('Basic ')) {
-    res.writeHead(401, { 'WWW-Authenticate': `Basic realm="${APP_TITLE}"` });
-    res.end('Authentifizierung erforderlich');
-    return false;
+/**
+ * Constant-time string comparison using SHA-256 digests to prevent timing attacks
+ */
+function safeCompare(a, b) {
+  const hashA = crypto.createHash('sha256').update(String(a)).digest();
+  const hashB = crypto.createHash('sha256').update(String(b)).digest();
+  return crypto.timingSafeEqual(hashA, hashB);
+}
+
+/**
+ * Create signed HMAC session token
+ */
+function createSessionToken(username) {
+  const exp = Date.now() + SESSION_HOURS * 3600 * 1000;
+  const payload = Buffer.from(JSON.stringify({ u: username, exp })).toString('base64url');
+  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+/**
+ * Verify signed HMAC session token
+ */
+function verifySessionToken(token) {
+  if (!token || typeof token !== 'string' || !token.includes('.')) return null;
+  const [payload, sig] = token.split('.');
+  const expectedSig = crypto
+    .createHmac('sha256', SESSION_SECRET)
+    .update(payload)
+    .digest('base64url');
+  if (!safeCompare(sig, expectedSig)) return null;
+  try {
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (!data.exp || Date.now() > data.exp) return null;
+    if (!safeCompare(data.u, AUTH_USER)) return null;
+    return data.u;
+  } catch (_) {
+    return null;
   }
-  const credentials = Buffer.from(authHeader.slice(6), 'base64').toString('utf8');
-  const [user, pass] = credentials.split(':');
-  if (user === BASIC_AUTH_USER && pass === BASIC_AUTH_PASS) {
-    return true;
-  }
-  res.writeHead(401, { 'WWW-Authenticate': `Basic realm="${APP_TITLE}"` });
-  res.end('Ungültige Zugangsdaten');
-  return false;
+}
+
+function parseCookies(req) {
+  const header = req.headers.cookie || '';
+  const cookies = {};
+  header.split(';').forEach(pair => {
+    const idx = pair.indexOf('=');
+    if (idx > -1) {
+      const k = pair.slice(0, idx).trim();
+      const v = pair.slice(idx + 1).trim();
+      cookies[k] = decodeURIComponent(v);
+    }
+  });
+  return cookies;
+}
+
+function getAuthenticatedUser(req) {
+  if (!AUTH_ENABLED) return AUTH_USER;
+  const cookies = parseCookies(req);
+  const token = cookies[COOKIE_NAME];
+  return verifySessionToken(token);
 }
 
 function parseJsonBody(req) {
@@ -86,9 +146,6 @@ function parseJsonBody(req) {
   });
 }
 
-/**
- * Build Portainer-style Stacks summary from container list
- */
 function buildStacksSummary(containers) {
   const map = new Map();
   for (const c of containers) {
@@ -128,18 +185,107 @@ const server = http.createServer(async (req, res) => {
   try {
     const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const pathname = parsedUrl.pathname;
+    const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
 
-    // Healthcheck Endpoint (unauthenticated for Docker/Portainer healthcheck)
+    // 1. Healthcheck Endpoint (unauthenticated for Docker/Portainer healthcheck)
     if (req.method === 'GET' && pathname === '/health') {
       return sendJson(res, 200, { status: 'ok', uptime: process.uptime() });
     }
 
-    // Optional Basic Auth Check
-    if (!checkBasicAuth(req, res)) return;
+    // 2. Public Auth Endpoints (/api/auth/status, /api/auth/login, /api/auth/logout)
+    if (req.method === 'GET' && pathname === '/api/auth/status') {
+      const user = getAuthenticatedUser(req);
+      return sendJson(res, 200, {
+        authEnabled: AUTH_ENABLED,
+        authenticated: Boolean(user),
+        username: user || null,
+        appTitle: APP_TITLE
+      });
+    }
 
-    // --- API ROUTES ---
+    if (req.method === 'POST' && pathname === '/api/auth/login') {
+      const now = Date.now();
+      const attempt = loginAttempts.get(clientIp);
+      if (attempt && attempt.count >= MAX_LOGIN_ATTEMPTS && now < attempt.resetAt) {
+        const waitSec = Math.ceil((attempt.resetAt - now) / 1000);
+        return sendJson(res, 429, {
+          error: `Zu viele Fehlversuche. Bitte warte ${waitSec} Sekunden.`
+        });
+      }
 
-    // 1. GET /api/overview
+      const body = await parseJsonBody(req);
+      const inputUser = String(body.username || '').trim();
+      const inputPass = String(body.password || '');
+
+      const validUser = safeCompare(inputUser, AUTH_USER);
+      const validPass = safeCompare(inputPass, AUTH_PASS);
+
+      if (!validUser || !validPass) {
+        const prevCount = attempt && now < attempt.resetAt ? attempt.count : 0;
+        loginAttempts.set(clientIp, {
+          count: prevCount + 1,
+          resetAt: now + LOCKOUT_MS
+        });
+        return sendJson(res, 401, {
+          error: 'Ungültiger Benutzername oder Passwort.'
+        });
+      }
+
+      loginAttempts.delete(clientIp);
+      const token = createSessionToken(AUTH_USER);
+      const maxAge = SESSION_HOURS * 3600;
+      return sendJson(
+        res,
+        200,
+        { ok: true, username: AUTH_USER },
+        {
+          'Set-Cookie': `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}`
+        }
+      );
+    }
+
+    if (req.method === 'POST' && pathname === '/api/auth/logout') {
+      return sendJson(
+        res,
+        200,
+        { ok: true },
+        {
+          'Set-Cookie': `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`
+        }
+      );
+    }
+
+    // 3. Public Static Assets needed for Login Page (/login, /styles.css)
+    if (req.method === 'GET' && (pathname === '/login' || pathname === '/login.html')) {
+      const user = getAuthenticatedUser(req);
+      if (user) {
+        res.writeHead(302, { Location: '/' });
+        return res.end();
+      }
+      const loginFile = path.join(PUBLIC_DIR, 'login.html');
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      return fs.createReadStream(loginFile).pipe(res);
+    }
+
+    if (req.method === 'GET' && pathname === '/styles.css') {
+      const cssFile = path.join(PUBLIC_DIR, 'styles.css');
+      res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8' });
+      return fs.createReadStream(cssFile).pipe(res);
+    }
+
+    // 4. Enforce Authentication for Dashboard & Protected API Routes
+    const currentUser = getAuthenticatedUser(req);
+    if (!currentUser) {
+      if (pathname.startsWith('/api/')) {
+        return sendJson(res, 401, { error: 'Nicht angemeldet', unauthorized: true });
+      }
+      res.writeHead(302, { Location: '/login' });
+      return res.end();
+    }
+
+    // --- PROTECTED API ROUTES ---
+
+    // GET /api/overview
     if (req.method === 'GET' && pathname === '/api/overview') {
       const includeStats = parsedUrl.searchParams.get('stats') === 'true';
       const { mode, socketPath, containers } = await listContainers(includeStats);
@@ -154,6 +300,10 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         mode,
         socketPath,
+        auth: {
+          authEnabled: AUTH_ENABLED,
+          username: currentUser
+        },
         config: {
           appTitle: APP_TITLE,
           autoRefreshSeconds: AUTO_REFRESH_SECONDS,
@@ -175,7 +325,7 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // 2. GET /api/containers/:id
+    // GET /api/containers/:id
     const containerDetailMatch = pathname.match(/^\/api\/containers\/([^/]+)$/);
     if (req.method === 'GET' && containerDetailMatch) {
       const idOrName = decodeURIComponent(containerDetailMatch[1]);
@@ -184,7 +334,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, details);
     }
 
-    // 3. POST /api/containers/:id/action
+    // POST /api/containers/:id/action
     const containerActionMatch = pathname.match(/^\/api\/containers\/([^/]+)\/action$/);
     if (req.method === 'POST' && containerActionMatch) {
       const idOrName = decodeURIComponent(containerActionMatch[1]);
@@ -193,20 +343,20 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, result);
     }
 
-    // 4. POST /api/batch-action (Stack / Group / Multi-Select Start, Stop, Restart)
+    // POST /api/batch-action
     if (req.method === 'POST' && pathname === '/api/batch-action') {
       const body = await parseJsonBody(req);
       const result = await performBatchAction(body.targets || [], body.action);
       return sendJson(res, 200, result);
     }
 
-    // 5. GET /api/groups
+    // GET /api/groups
     if (req.method === 'GET' && pathname === '/api/groups') {
       const live = await isDockerAvailable();
       return sendJson(res, 200, { groups: loadGroups(!live) });
     }
 
-    // 6. POST /api/groups (Create merged container group)
+    // POST /api/groups
     if (req.method === 'POST' && pathname === '/api/groups') {
       const live = await isDockerAvailable();
       const body = await parseJsonBody(req);
@@ -225,7 +375,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 201, { group: created });
     }
 
-    // 7. PUT /api/groups/:id (Update group / add or remove containers)
+    // PUT /api/groups/:id
     const groupMatch = pathname.match(/^\/api\/groups\/([^/]+)$/);
     if (req.method === 'PUT' && groupMatch) {
       const groupId = decodeURIComponent(groupMatch[1]);
@@ -238,7 +388,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { group: updated });
     }
 
-    // 8. DELETE /api/groups/:id
+    // DELETE /api/groups/:id
     if (req.method === 'DELETE' && groupMatch) {
       const groupId = decodeURIComponent(groupMatch[1]);
       const live = await isDockerAvailable();
@@ -249,7 +399,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true });
     }
 
-    // --- STATIC FRONTEND SERVING ---
+    // --- PROTECTED STATIC FRONTEND SERVING ---
     let filePath = pathname === '/' ? '/index.html' : pathname;
     const resolvedPath = path.normalize(path.join(PUBLIC_DIR, filePath));
     if (!resolvedPath.startsWith(PUBLIC_DIR)) {
@@ -260,12 +410,12 @@ const server = http.createServer(async (req, res) => {
     if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isFile()) {
       const ext = path.extname(resolvedPath).toLowerCase();
       const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-      res.writeHead(200, { 'Content-Type': contentType });
+      res.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'no-store' });
       fs.createReadStream(resolvedPath).pipe(res);
     } else {
       const indexFile = path.join(PUBLIC_DIR, 'index.html');
       if (fs.existsSync(indexFile)) {
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
         fs.createReadStream(indexFile).pipe(res);
       } else {
         res.writeHead(404);
@@ -281,6 +431,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`=================================================`);
   console.log(`🐳 ${APP_TITLE} (Docker-Checker) läuft auf Port ${PORT}`);
+  console.log(`🔐 Login-Schutz: ${AUTH_ENABLED ? `AKTIV (Benutzer: ${AUTH_USER})` : 'DEAKTIVIERT'}`);
   console.log(`🌐 Web-UI: http://localhost:${PORT}`);
   console.log(`=================================================`);
 });
