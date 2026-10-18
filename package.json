@@ -1,0 +1,14 @@
+{
+  "name": "docker-checker",
+  "version": "1.0.0",
+  "description": "Docker Container, Stack & Custom Group Manager Web UI",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
+}
